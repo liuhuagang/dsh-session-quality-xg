@@ -1,0 +1,49 @@
+{
+  "name": "dsh-session-quality-xg",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH plugin: cross-session conversation quality analysis (scale / context occupancy trajectory / cache hit / TTFT / compaction / route changes / abnormal turns) with a session_quality query tool and a Web dashboard tab (conversation.view).",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/logic.js",
+    "lib/client.js",
+    "lib/types/**/*.d.ts"
+  ],
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:host": "tsc -p tsconfig.json",
+    "prepare": "node scripts/build.mjs",
+    "test": "node --test tests/logic.spec.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-host-webserver": "*",
+    "@deepseek-ai/dsh-session": "*",
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-host-webserver": "*",
+    "@deepseek-ai/dsh-session": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "typescript": "^5"
+  }
+}
