@@ -13,6 +13,8 @@ export interface UsageBuckets {
 
 export interface SessionSummaryRow {
   sessionId: string
+  /** 会话标题（无标题事件时省略） */
+  title?: string
   cwd?: string
   agentPreset?: string
   createdAt: number
@@ -98,6 +100,8 @@ export type TracePoint =
 export interface SessionQualityReport {
   generatedAt: number
   sessionId: string
+  /** 会话标题（无标题事件时省略） */
+  title?: string
   cwd?: string
   agentPreset?: string
   createdAt: number

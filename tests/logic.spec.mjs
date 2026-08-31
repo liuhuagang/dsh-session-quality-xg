@@ -255,6 +255,19 @@ test('折叠：路由变更只在 route/容量变化时记录', () => {
   assert.equal(routes[2].contextWindow, 64_000)
 })
 
+test('折叠：session/title 事件记录标题，后到者胜', () => {
+  const events = [
+    ev(0, 'session/title', 1_000, { title: 'Alpha 主题' }),
+    ev(1, 'turn/start', 2_000, { turn: 0 }),
+    ev(2, 'session/title', 3_000, { title: 'Beta 主题' }),
+  ]
+  const fold = foldStandard(events)
+  assert.equal(foldToStored(fold).title, 'Beta 主题')
+  // 空标题不覆盖已有标题
+  foldQualityEvent(fold, ev(3, 'session/title', 4_000, { title: '   ' }))
+  assert.equal(foldToStored(fold).title, 'Beta 主题')
+})
+
 // ---------- 报告 ----------
 
 test('报告：上下文/缓存/延迟/压缩/异常全字段正确', () => {
@@ -397,6 +410,20 @@ test('列表报告：cwd 过滤、最近活跃排序、limit', () => {
   assert.equal(byId.sessionCount, 1)
 })
 
+test('报告：标题透出到详情报告与摘要行', () => {
+  const stored = foldToStored(foldStandard())
+  stored.title = '会话标题'
+  const report = buildSessionReport('s1', stored, { now: 30_000 })
+  assert.equal(report.title, '会话标题')
+  const state = emptyState()
+  state.sessions['s1'] = stored
+  const list = buildListReport(state, { now: 30_000 })
+  assert.equal(list.rows[0].title, '会话标题')
+  // 无标题时字段省略
+  const plain = buildSessionReport('s2', foldToStored(foldStandard()), { now: 0 })
+  assert.equal(plain.title, undefined)
+})
+
 // ---------- 持久化 ----------
 
 test('持久化：saveState/loadState 往返一致（含明细与压缩）', () => {
@@ -420,6 +447,22 @@ test('持久化：损坏/缺失文件返回空状态', () => {
     assert.deepEqual(loadState(join(dir, 'missing.json')), emptyState())
     writeFileSync(join(dir, 'bad.json'), '{not json', 'utf8')
     assert.deepEqual(loadState(join(dir, 'bad.json')), emptyState())
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('持久化：title 字段往返保留', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sq-'))
+  const file = stateFilePath(dir)
+  try {
+    const state = emptyState()
+    const stored = foldToStored(foldStandard())
+    stored.title = '标题 X'
+    state.sessions['s1'] = stored
+    saveState(file, state)
+    const loaded = loadState(file)
+    assert.equal(loaded.sessions['s1'].title, '标题 X')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -449,4 +492,18 @@ test('渲染：列表报告包含每会话摘要', () => {
   assert.ok(text.includes('【会话质量列表】'))
   assert.ok(text.includes('s1'))
   assert.ok(text.includes('4 轮/4 步/4 调用'))
+})
+
+test('渲染：标题优先展示（标题 + 短 id），无标题回退 id', () => {
+  const stored = foldToStored(foldStandard())
+  stored.title = '会话标题'
+  const reportText = renderSessionReport(buildSessionReport('sess-1', stored, { now: 30_000 }))
+  assert.ok(reportText.includes('【会话质量分析】会话标题（sess-1）（/work/gyra）'))
+  const state = emptyState()
+  state.sessions['s1'] = stored
+  const listText = renderListReport(buildListReport(state, { now: 30_000 }))
+  assert.ok(listText.includes('会话标题（s1）'))
+  // 无标题：保持原样（仅 id）
+  const plain = renderSessionReport(buildSessionReport('sess-1', foldToStored(foldStandard()), { now: 0 }))
+  assert.ok(plain.includes('【会话质量分析】sess-1（/work/gyra）'))
 })

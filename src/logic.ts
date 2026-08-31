@@ -89,6 +89,8 @@ export interface RouteChange {
 export interface StoredQualitySession {
   cwd?: string
   agentPreset?: string
+  /** 会话标题（session/title 事件折叠所得；无标题事件时为 undefined） */
+  title?: string
   createdAt: number
   lastActivity: number
   /** 折叠处理的事件数（seq 去重后） */
@@ -478,6 +480,12 @@ export function foldQualityEvent(fold: QualityFold, event: FoldableEvent): void 
       s.seedEndSeq = event.seq
       break
     }
+    case 'session/title': {
+      // 会话标题：最新 session/title 事件胜出（与 DSH 标题投影一致）
+      const title = d['title']
+      if (typeof title === 'string' && title.trim().length > 0) s.title = title.trim()
+      break
+    }
     case 'compaction/start': {
       const id = typeof d['compactionId'] === 'string' ? d['compactionId'] : `unknown-${event.seq}`
       fold.openCompaction = {
@@ -540,6 +548,7 @@ export function foldToStored(fold: QualityFold): StoredQualitySession {
   return {
     ...fold.meta.cwd === undefined ? {} : { cwd: fold.meta.cwd },
     ...fold.meta.agentPreset === undefined ? {} : { agentPreset: fold.meta.agentPreset },
+    ...fold.stored.title === undefined ? {} : { title: fold.stored.title },
     createdAt: fold.meta.createdAt,
     lastActivity: fold.stored.lastActivity,
     events: fold.stored.events,
@@ -650,6 +659,7 @@ export function sanitizeStoredSession(value: unknown): StoredQualitySession | nu
   return {
     ...typeof v['cwd'] === 'string' ? { cwd: v['cwd'] } : {},
     ...typeof v['agentPreset'] === 'string' ? { agentPreset: v['agentPreset'] } : {},
+    ...typeof v['title'] === 'string' && v['title'].length > 0 ? { title: v['title'] } : {},
     createdAt: isFiniteNumber(v['createdAt']) ? v['createdAt'] : 0,
     lastActivity: isFiniteNumber(v['lastActivity']) && v['lastActivity'] >= 0 ? v['lastActivity'] : 0,
     events: isFiniteNumber(v['events']) && v['events'] >= 0 ? v['events'] : 0,
@@ -831,6 +841,8 @@ export function buildContextTrace(
 export interface SessionQualityReport {
   generatedAt: number
   sessionId: string
+  /** 会话标题（无标题事件时省略） */
+  title?: string
   cwd?: string
   agentPreset?: string
   createdAt: number
@@ -996,6 +1008,7 @@ export function buildSessionReport(sessionId: string, session: StoredQualitySess
   return {
     generatedAt: opts.now,
     sessionId,
+    ...session.title === undefined ? {} : { title: session.title },
     ...session.cwd === undefined ? {} : { cwd: session.cwd },
     ...session.agentPreset === undefined ? {} : { agentPreset: session.agentPreset },
     createdAt: session.createdAt,
@@ -1046,6 +1059,8 @@ export function buildSessionReport(sessionId: string, session: StoredQualitySess
 /** 会话摘要（列表/聚合模式，不携带明细） */
 export interface SessionSummaryRow {
   sessionId: string
+  /** 会话标题（无标题事件时省略） */
+  title?: string
   cwd?: string
   agentPreset?: string
   createdAt: number
@@ -1074,6 +1089,7 @@ export function summarizeSession(id: string, session: StoredQualitySession): Ses
   }
   return {
     sessionId: id,
+    ...session.title === undefined ? {} : { title: session.title },
     ...session.cwd === undefined ? {} : { cwd: session.cwd },
     ...session.agentPreset === undefined ? {} : { agentPreset: session.agentPreset },
     createdAt: session.createdAt,
@@ -1174,11 +1190,16 @@ const fmtRatio = (r: number | null): string => r === null ? '-' : `${(r * 100).t
 
 const fmtK = (n: number | null): string => n === null ? '-' : n >= 1024 ? `${(n / 1024).toFixed(1)}K` : String(n)
 
+/** 会话显示标签：有标题时 "标题（id）"，否则仅 id（提升可读性） */
+export function sessionLabel(title: string | undefined, id: string): string {
+  return title === undefined || title.length === 0 ? id : `${title}（${id}）`
+}
+
 /** 渲染单会话质量报告为中文摘要文本 */
 export function renderSessionReport(report: SessionQualityReport): string {
   const lines: string[] = []
   const s = report.scale
-  lines.push(`【会话质量分析】${report.sessionId}${report.cwd === undefined ? '' : `（${report.cwd}）`}`)
+  lines.push(`【会话质量分析】${sessionLabel(report.title, report.sessionId)}${report.cwd === undefined ? '' : `（${report.cwd}）`}`)
   lines.push(`规模：${s.turns} 轮 / ${s.steps} 步 / ${fmtInt(report.scale.calls)} 次有用量调用`
     + `${s.noUsageCalls > 0 ? `（${fmtInt(s.noUsageCalls)} 次无用量，含失败/中断）` : ''}`
     + ` / ${fmtInt(s.events)} 事件 / 跨度 ${s.days} 天（${fmtDateTime(s.firstEventTime)} → ${fmtDateTime(s.lastEventTime)}）`
@@ -1281,9 +1302,10 @@ export function renderListReport(report: SessionListReport): string {
   }
   for (const row of report.rows) {
     const shortId = row.sessionId.length > 19 ? `${row.sessionId.slice(0, 19)}…` : row.sessionId
+    const label = sessionLabel(row.title, shortId)
     const cwd = row.cwd === undefined ? '' : `  ${row.cwd}`
     lines.push(
-      `  ${shortId}${cwd}  ${row.turns} 轮/${row.steps} 步/${fmtInt(row.calls)} 调用`
+      `  ${label}${cwd}  ${row.turns} 轮/${row.steps} 步/${fmtInt(row.calls)} 调用`
       + `  合计 ${fmtInt(row.totalTokens)} tokens`
       + `  峰值上下文 ${fmtK(row.peakPressure)}${row.peakContextWindow === null ? '' : `/${fmtK(row.peakContextWindow)}`}`
       + `${row.compactions > 0 ? `  压缩 ${row.compactions} 次` : ''}`

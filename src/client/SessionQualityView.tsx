@@ -59,6 +59,17 @@ function shortSession(id: string): string {
   return id.length > 15 ? `${id.slice(0, 15)}…` : id
 }
 
+/** 会话标签：有标题显示 "标题 · 短id"，否则仅短 id */
+function sessionCell(title: string | undefined, sessionId: string): ReactElement {
+  if (title === undefined || title.length === 0) return <>{shortSession(sessionId)}</>
+  return (
+    <>
+      {title}
+      <span className="sqs-muted"> · {shortSession(sessionId)}</span>
+    </>
+  )
+}
+
 // ---------- 通用小组件 ----------
 
 function Card({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }): ReactElement {
@@ -163,8 +174,9 @@ function DetailView({ report, onBack }: { report: SessionQualityReport; onBack: 
     <div className="sqs-detail">
       <div className="sqs-detail-head">
         <button className="sqs-back" onClick={onBack}>← 返回列表</button>
-        <div className="sqs-title">{shortSession(report.sessionId)}</div>
+        <div className="sqs-title">{report.title ?? shortSession(report.sessionId)}</div>
         <div className="sqs-sub">
+          {report.title !== undefined ? `${shortSession(report.sessionId)} · ` : ''}
           {report.cwd ?? ''} · {report.scale.turns} 轮 / {report.scale.steps} 步 /
           {fmtInt(report.scale.calls)} 调用 · {fmtDateTime(report.scale.firstEventTime)} → {fmtDateTime(report.scale.lastEventTime)}
           {report.scale.resumes > 0 ? ` · 恢复 ${report.scale.resumes}` : ''}
@@ -299,7 +311,9 @@ function ListView({
       <tbody>
         {list.rows.map(row => (
           <tr key={row.sessionId} className="sqs-row" onClick={() => onSelect(row.sessionId)}>
-            <td className="sqs-ellipsis" title={row.sessionId}>{shortSession(row.sessionId)}</td>
+            <td className="sqs-ellipsis" title={row.title !== undefined ? `${row.title}（${row.sessionId}）` : row.sessionId}>
+              {sessionCell(row.title, row.sessionId)}
+            </td>
             <td className="sqs-ellipsis" title={row.cwd ?? ''}>{row.cwd ?? '-'}</td>
             <td>{row.turns} 轮/{row.steps} 步/{fmtInt(row.calls)}</td>
             <td>{fmtInt(row.totalTokens)}</td>

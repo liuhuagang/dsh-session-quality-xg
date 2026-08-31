@@ -161,6 +161,7 @@ const sessionReportSchema = {
   properties: {
     generatedAt: { type: 'integer' },
     sessionId: { type: 'string' },
+    title: { type: 'string' },
     cwd: { type: 'string' },
     agentPreset: { type: 'string' },
     createdAt: { type: 'integer' },
@@ -195,7 +196,7 @@ const sessionReportSchema = {
         lastRatio: { oneOf: [{ type: 'number' }, { type: 'null' }] },
         peakContextWindow: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
         compactionWatermark: { oneOf: [{ type: 'number' }, { type: 'null' }] },
-        perCallIncrement: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
+        perCallIncrement: { oneOf: [{ type: 'number' }, { type: 'null' }] },
         callsUntilCompaction: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
         suggestedWindow: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
       },
@@ -243,6 +244,7 @@ const summaryRowSchema = {
   additionalProperties: false,
   properties: {
     sessionId: { type: 'string' },
+    title: { type: 'string' },
     cwd: { type: 'string' },
     agentPreset: { type: 'string' },
     createdAt: { type: 'integer' },
@@ -334,6 +336,56 @@ export function apply(ctx: Context, config: Config): void {
     }
   }, 'session-quality:state')
 
+  // ---------- 会话标题回填（可选依赖 session-query；缺省时仅用折叠所得标题） ----------
+
+  /** session-query 服务的结构化子集（readTitleSnapshots 折叠持久化日志中的 session/title 事件） */
+  interface TitleBackfillService {
+    readTitleSnapshots(
+      sessionIds: readonly string[],
+      signal?: AbortSignal,
+    ): Promise<ReadonlyArray<
+      | { status: 'fulfilled'; value: { title?: { title: string } } }
+      | { status: 'rejected'; reason: unknown }
+    >>
+  }
+
+  const sessionQuery = ctx.get('sessionQuery') as TitleBackfillService | undefined
+  /** 已解析的会话标题缓存（回填过的 id 不再重复读日志） */
+  const titleCache = new Map<string, string>()
+
+  /**
+   * 为缺少标题的跟踪会话回填标题：折叠持久化/内存日志中的 session/title
+   * 事件（session-query 优先用内存日志，缺失时读持久化日志）。解析结果写入
+   * 状态（随下一次 flush 落盘）。可选依赖：sessionQuery 缺失时静默跳过。
+   */
+  async function backfillTitles(): Promise<void> {
+    if (sessionQuery === undefined) return
+    const need = Object.keys(state.sessions).filter(id =>
+      state.sessions[id]!.title === undefined && !titleCache.has(id))
+    if (need.length === 0) return
+    let results: Awaited<ReturnType<TitleBackfillService['readTitleSnapshots']>>
+    try {
+      results = await sessionQuery.readTitleSnapshots(need)
+    } catch (error) {
+      console.warn(`[session-quality] title backfill failed: ${String(error)}`)
+      return
+    }
+    let changed = false
+    results.forEach((result, i) => {
+      const id = need[i]
+      if (id === undefined || result.status !== 'fulfilled') return
+      const title = result.value?.title?.title
+      if (typeof title !== 'string' || title.length === 0) return
+      titleCache.set(id, title)
+      const session = state.sessions[id]
+      if (session !== undefined && session.title === undefined) {
+        session.title = title
+        changed = true
+      }
+    })
+    if (changed) scheduleFlush()
+  }
+
   // ---------- Web 看板 API（webServer 为 inject 硬依赖，apply 时必然就绪） ----------
 
   function json(res: ServerResponse, status: number, body: unknown): void {
@@ -356,10 +408,11 @@ export function apply(ctx: Context, config: Config): void {
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
-    handler: (req, res) => {
+    handler: async (req, res) => {
       try {
         const url = new URL(req.url ?? '/', 'http://127.0.0.1')
         if (url.pathname === `${API_PREFIX}/list`) {
+          await backfillTitles()
           const days = intParam(url.searchParams.get('days'), 1, 3650)
           const limit = intParam(url.searchParams.get('limit'), 1, 100)
           json(res, 200, buildListReport(state, {
@@ -376,6 +429,7 @@ export function apply(ctx: Context, config: Config): void {
             json(res, 400, { error: 'sessionId query parameter is required' })
             return
           }
+          await backfillTitles()
           const candidates = Object.entries(state.sessions)
             .filter(([sid]) => sid === id || sid.startsWith(id))
           if (candidates.length === 0) {
@@ -494,7 +548,8 @@ export function apply(ctx: Context, config: Config): void {
       },
     },
     isConcurrencySafe: () => true,
-    execute(args) {
+    async execute(args) {
+      await backfillTitles()
       const now = Date.now()
       const idFilter = args.sessionId?.trim()
       if (idFilter !== undefined && idFilter.length > 0) {
@@ -502,23 +557,30 @@ export function apply(ctx: Context, config: Config): void {
         const candidates = Object.entries(state.sessions)
           .filter(([id]) => id === idFilter || id.startsWith(idFilter))
         if (candidates.length === 0) {
-          return Promise.resolve({
+          return {
             mode: 'list' as const,
             list: buildListReport(state, { days: args.days, now, limit: args.limit ?? 10 }),
-          })
+          }
         }
         candidates.sort((a, b) => b[1].lastActivity - a[1].lastActivity)
         const [sid, session] = candidates[0]!
         const report = buildSessionReport(sid, session, { now, headroom, slowCallLimit: 5 })
-        return Promise.resolve({ mode: 'detail' as const, detail: report })
+        return { mode: 'detail' as const, detail: report }
       }
-      return Promise.resolve({
+      return {
         mode: 'list' as const,
         list: buildListReport(state, { days: args.days, cwd: args.cwd, limit: args.limit, now }),
-      })
+      }
     },
     presentCall: args => ({ card: 'generic', title: '分析会话质量', kind: 'other', rawInput: args }),
   }))
+
+  // 启动后延迟回填一次历史标题（不阻塞启动；查询路径仍有兜底回填）
+  ctx.effect(() => {
+    const warmup = setTimeout(() => { void backfillTitles() }, 3_000)
+    warmup.unref?.()
+    return () => clearTimeout(warmup)
+  }, 'session-quality:title-warmup')
 
   console.log(
     `[session-quality] started: dir=${dir} trackedSessions=${Object.keys(state.sessions).length}`

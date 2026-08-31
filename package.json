@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-quality-xg",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "DSH plugin: cross-session conversation quality analysis (scale / context occupancy trajectory / cache hit / TTFT / compaction / route changes / abnormal turns) with a session_quality query tool and a Web dashboard tab (conversation.view).",
