@@ -1,8 +1,6 @@
 # dsh-session-quality-xg — Cross-Session Conversation Quality Analysis
 
-<div align="center">
-  <sub><a href="README.md">简体中文</a> | <b>English</b></sub>
-</div>
+[简体中文](README.md) · **English**
 
 > [!NOTE] Maintenance status
 > This plugin is an internal tool in the XG series, **provided for learning and reference only, with no maintenance commitment** (issues are not guaranteed to be answered).
